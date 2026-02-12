@@ -1,191 +1,370 @@
-# Airflow lab
-### EPL Match Outcome Prediction with Airflow
+# 🏥 Diabetes Prediction Pipeline with Apache Airflow
 
-This project uses Apache Airflow running on Docker to create an automated machine learning pipeline. The goal is to predict the outcome (Home Win, Draw, or Away Win) of English Premier League (EPL) matches.
+An automated machine learning pipeline built with **Apache Airflow** and **Docker** that predicts the likelihood of diabetes in patients using the Diabetes Prediction Dataset.
 
-The pipeline fetches historical match data, engineers features to represent team form, trains two separate models to predict home and away goals, and then derives the final match outcome from those goal predictions.
+## 📋 Overview
 
-### ML Model
+This project implements a complete MLOps pipeline using Airflow to orchestrate a supervised binary classification workflow. The pipeline:
 
-This project uses a supervised learning approach to predict match outcomes. A critical step is feature engineering, where we calculate a team's historical performance (e.g., average shots, goals in the last 5 games) to use as input. 
+1. **Loads** the diabetes prediction dataset (CSV format)
+2. **Preprocesses** data by encoding categoricals and scaling numerical features
+3. **Trains** a Random Forest Classifier with balanced class weights
+4. **Evaluates** the model with accuracy, ROC-AUC, confusion matrix, and feature importance scores
+5. **Notifies** completion status
 
-#### Prerequisites
+The pipeline runs entirely in Docker containers, making it reproducible and environment-agnostic.
 
-Before using this script, make sure you have the following libraries installed:
+## 🎯 ML Model
 
-- pandas
-- scikit-learn (sklearn)
+**Model Type:** Binary Classification (Random Forest Classifier)  
+**Target Variable:** `diabetes` (0 = No Diabetes, 1 = Diabetes)  
+**Input Features:** 8 features (gender, age, hypertension, heart_disease, smoking_history, bmi, HbA1c_level, blood_glucose_level)  
+**Key Technique:** Stratified Train/Test Split (80/20) with StandardScaler for numerical normalization
 
-#### Usage
+### Key Design Decisions
 
-The machine learning logic is defined in dags/src/lab.py and includes:
+- **Balanced Class Weights:** Handles the ~91% vs ~9% class imbalance in the raw data
+- **StandardScaler:** Normalizes all numerical features to mean=0, std=1 for better convergence
+- **LabelEncoder:** Encodes categorical columns (gender, smoking_history) to numerical values
+- **XCom Serialization:** Passes DataFrames between Airflow tasks using base64-encoded pickle format
 
-- load_and_feature_engineer(): Loads the EPL dataset and creates historical, rolling-average features for each team to represent their recent form.
+## 📁 Project Structure
 
-- preprocess_and_split_data(): Prepares the data for modeling by scaling features and splitting it into training and testing sets for both the home and away goal models.
-
-- train_goal_models(): Trains two separate RandomForestRegressor models—one for predicting home goals and one for away goals—and saves them.
-
-- evaluate_models(): Loads the trained models, makes goal predictions on the test set, derives the final match outcomes, and prints a final accuracy score and confusion matrix.
-
-### Project Structure
-Your project directory should be set up as follows for the pipeline to work correctly:
 ```
-airflow_lab1/
+Lab2/
 ├── dags/
 │   ├── data/
-│   │   └── E0.csv 
+│   │   └── diabetes_prediction_dataset.csv   # Input dataset (~100K rows, 9 columns)
 │   ├── model/
-│   │   └── epl_goal_models.sav
+│   │   └── diabetes_rf_model.sav              # Trained model + scaler (pickle format)
 │   ├── src/
-│   │   └── lab.py
-│   └── airflow.py
-├── logs/
-├── plugins/
-├── .env               
-└── docker-compose.yaml
+│   │   ├── __init__.py
+│   │   └── lab.py                             # ML pipeline logic (5 tasks)
+│   └── airflow.py                             # Airflow DAG definition
+├── logs/                                       # Airflow task execution logs
+├── plugins/                                    # Custom Airflow plugins (empty)
+├── docker-compose.yaml                         # Docker services: Airflow, Postgres, Redis
+├── README.md                                   # This file
+└── .env                                        # Environment variables (AIRFLOW_UID)
 ```
 
-### Airflow Setup
+## 🔧 Pipeline Tasks
 
-Use Airflow to author workflows as directed acyclic graphs (DAGs) of tasks. The Airflow scheduler executes your tasks on an array of workers while following the specified dependencies.
+### 1. **setup_directories** (BashOperator)
+Creates the `/opt/airflow/dags/model` directory to store trained models.
 
-References
+### 2. **load_data_task** (PythonOperator)
+Loads `dags/data/diabetes_prediction_dataset.csv` and pushes the raw DataFrame to XCom.
 
--   Product - https://airflow.apache.org/
--   Documentation - https://airflow.apache.org/docs/
--   Github - https://github.com/apache/airflow
+**Function:** `load_data(ti, file_path="dags/data/diabetes_prediction_dataset.csv")`
 
-#### Installation
+**Output:**
+- Prints dataset shape, columns, and class distribution
+- Serializes DataFrame using base64 pickle encoding
 
-Prerequisites: You should allocate at least 4GB memory for the Docker Engine (ideally 8GB).
+### 3. **preprocess_data_task** (PythonOperator)
+Encodes categorical features, scales numerical features, and splits data into train/test sets.
 
-Local
+**Function:** `preprocess_data(ti)`
 
--   Docker Desktop Running
+**Processing Steps:**
+- LabelEncode: `gender` and `smoking_history`
+- StandardScale: All features except target
+- Stratified Train/Test Split: 80/20 ratio to preserve class balance
 
-Cloud
+**Output:** Scaler and split data (X_train_scaled, X_test_scaled, y_train, y_test)
 
--   Linux VM
--   SSH Connection
--   Installed Docker Engine - [Install using the convenience script](https://docs.docker.com/engine/install/ubuntu/#install-using-the-convenience-script)
+### 4. **train_save_model_task** (PythonOperator)
+Trains a Random Forest Classifier and saves model + scaler to disk.
 
-#### Step-by-Step Instructions
+**Function:** `train_save_model(ti)`
 
-1. Create a new directory
+**Model Configuration:**
+```python
+RandomForestClassifier(
+    n_estimators=100,
+    max_depth=10,
+    min_samples_leaf=5,
+    class_weight='balanced',  # Handles class imbalance
+    random_state=42,
+    n_jobs=-1  # Use all CPU cores
+)
+```
 
-    ```bash
-    mkdir -p ~/app
-    cd ~/app
-    ```
+**Output:** Saves to `/opt/airflow/dags/model/diabetes_rf_model.sav`
 
-2. Running Airflow in Docker - [Refer](https://airflow.apache.org/docs/apache-airflow/stable/howto/docker-compose/index.html#running-airflow-in-docker)
+### 5. **evaluate_model_task** (PythonOperator)
+Loads the model and evaluates predictions on the test set.
 
-    a. You can check if you have enough memory by running this command
+**Function:** `evaluate_model(ti)`
 
-    ```bash
-    docker run --rm "debian:bullseye-slim" bash -c 'numfmt --to iec $(echo $(($(getconf _PHYS_PAGES) * $(getconf PAGE_SIZE))))'
-    ```
+**Evaluation Metrics:**
+- **Accuracy:** Overall correctness (%)
+- **ROC-AUC:** Area under the ROC curve (0-1 scale, 1.0 = perfect)
+- **Confusion Matrix:** TN, FP, FN, TP breakdown
+- **Classification Report:** Precision, Recall, F1-Score per class
+- **Feature Importances:** Top contributing features
 
-    b. Fetch [docker-compose.yaml](https://airflow.apache.org/docs/apache-airflow/2.5.1/docker-compose.yaml)
+**Sample Output:**
+```
+========== 🩺 Diabetes Prediction - Model Evaluation ==========
+✅ Accuracy  : 96.50%
+✅ ROC-AUC   : 0.9850
 
-    ```bash
-    curl -LfO 'https://airflow.apache.org/docs/apache-airflow/2.5.1/docker-compose.yaml'
-    ```
+Confusion Matrix (Rows=Actual, Cols=Predicted):
+              Predicted No  Predicted Yes
+Actual No   :     9120      180
+Actual Yes  :     145       555
 
-    c. Setting the right Airflow user
+📊 Feature Importances (top to bottom):
+  blood_glucose_level    : 0.3250
+  HbA1c_level            : 0.2180
+  age                    : 0.1850
+  ...
+```
 
-    ```bash
-    mkdir -p ./dags ./logs ./plugins ./working_data
-    echo -e "AIRFLOW_UID=$(id -u)" > .env
-    ```
+### 6. **notify_task** (BashOperator)
+Prints a success message confirming pipeline completion.
 
-    d. Update the following in docker-compose.yml
+## 🚀 Getting Started
 
-    ```bash
-    # Donot load examples
-    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+### Prerequisites
 
-    # Additional python package
-    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:- pandas scikit-learn}
+- **Docker Desktop:** [Download here](https://www.docker.com/products/docker-desktop)
+- **Memory:** Allocate at least 4GB to Docker (8GB recommended)
+- **Disk Space:** ~2GB for Docker images and logs
 
-    # Output dir
-    - ${AIRFLOW_PROJ_DIR:-.}/working_data:/opt/airflow/working_data
+### System Memory Check
 
-    # Change default admin credentials
-    _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow2}
-    _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow2}
-    ```
+```bash
+docker run --rm "debian:bullseye-slim" bash -c 'numfmt --to iec $(echo $(($(getconf _PHYS_PAGES) * $(getconf PAGE_SIZE))))'
+```
 
-    e. Initialize the database
+### Step-by-Step Installation
 
-    ```bash
-    docker compose up airflow-init
-    ```
+#### 1. Clone or Download the Repository
 
-    f. Running Airflow
+```bash
+cd /path/to/Lab2
+```
 
-    ```bash
-    docker compose up
-    ```
+#### 2. Set Airflow UID
 
-    Wait until terminal outputs
+```bash
+# macOS/Linux
+echo -e "AIRFLOW_UID=$(id -u)" > .env
 
-    `app-airflow-webserver-1  | 127.0.0.1 - - [17/Feb/2023:09:34:29 +0000] "GET /health HTTP/1.1" 200 141 "-" "curl/7.74.0"`
+# Windows (Git Bash or WSL)
+echo "AIRFLOW_UID=50000" > .env
+```
 
-    g. Enable port forwarding
+#### 3. Create Necessary Directories
 
-    h. Visit `localhost:8080` login with credentials set on step `2.d`
+```bash
+mkdir -p dags logs plugins working_data
+```
 
-    i. Add Your Project Files
-        
-        - Place your EPL dataset (e.g., E0.csv) inside the dags/data/ directory.
+#### 4. Verify Docker Compose Installation
 
-        - Place your ML logic file (lab.py) inside the dags/src/ directory.
+```bash
+docker compose version
+```
 
-        - Place your DAG definition file (airflow.py) inside the dags/ directory.
-        
+#### 5. Initialize Airflow Database
 
-3. Stop docker containers
+```bash
+docker compose up airflow-init
+```
 
-    ```bash
-    docker compose down
-    ```
+**Wait for output:** `exited with code 0`
 
-### Running the Pipeline
+#### 6. Start Services
 
-1. Initialize the Database (Run Once):
+```bash
+docker compose up -d
+```
 
-    From your airflow_lab1 terminal, run:
+**Check status:**
+```bash
+docker compose ps
+```
 
-    ```
-    docker compose up airflow-init
-    ```
+Expected output (all services healthy):
+```
+CONTAINER ID   IMAGE                      SERVICE             STATUS
+abc123...      apache/airflow:2.9.2       airflow-webserver   Up 2 minutes (healthy)
+def456...      apache/airflow:2.9.2       airflow-scheduler   Up 2 minutes (healthy)
+ghi789...      apache/airflow:2.9.2       airflow-worker      Up 2 minutes (healthy)
+jkl012...      postgres:13                postgres            Up 2 minutes (healthy)
+mno345...      redis:7.2-bookworm         redis               Up 2 minutes (healthy)
+```
 
-2. Start Airflow
-    ```Bash
-    docker compose up
-    ```
+#### 7. Access Airflow UI
 
-3. Access Airflow UI
-    
-    `Open your web browser and go to http://localhost:8080. Log in with the default credentials (airflow / airflow).`
+Open your browser and navigate to:
 
-4. Trigger the DAG
+```
+http://localhost:8080
+```
 
-    On the DAGs page, find the EPL_Goal_Prediction_Pipeline.
+**Login Credentials:**
+- **Username:** `airflow2`
+- **Password:** `airflow2`
 
-    Click the play button (▶️) to start a new run.
+## 🎬 Running the Pipeline
 
-5. Check the Results
+### Option 1: Trigger via Airflow UI
 
-    Click on the DAG name to monitor its progress.
+1. On the **DAGs** page, find `Diabetes_Prediction_Pipeline`
+2. Click the **play button** (▶️) on the right side
+3. Click **Trigger DAG** in the dialog
 
-    Once the pipeline is complete, click on the final evaluate_models_task and view its Logs to see the model's final prediction accuracy and confusion matrix.
+### Option 2: Trigger via CLI
 
-6. Stop Docker Containers
-    When you are finished, stop the containers from your terminal:
+```bash
+docker compose exec airflow-cli airflow dags trigger Diabetes_Prediction_Pipeline
+```
 
-     ```Bash
-    docker compose down
-    ```
+### Monitor Pipeline Execution
+
+1. Click on the DAG name (`Diabetes_Prediction_Pipeline`)
+2. View the **Graph** tab to see task dependencies
+3. Click individual tasks to view **Logs**
+4. Check the **evaluate_model_task** logs for final metrics
+
+## 📊 Viewing Results
+
+After pipeline completion, check the **evaluate_model_task** logs:
+
+```bash
+# View logs directly
+docker compose logs airflow-scheduler | grep -A 50 "evaluate_model_task"
+```
+
+Or navigate to the Airflow UI → DAG → Task Instance → Logs
+
+## 🛠️ Troubleshooting
+
+### Service Won't Start
+
+**Problem:** `docker compose up` fails with memory error
+
+**Solution:**
+```bash
+# Allocate more memory to Docker (in Docker Desktop preferences)
+# Recommended: 8GB
+```
+
+### Postgres Connection Error
+
+**Problem:** `could not translate host name postgres to address`
+
+**Solution:**
+```bash
+# Restart containers
+docker compose down
+docker compose up -d
+```
+
+### Missing Data File
+
+**Problem:** `FileNotFoundError: diabetes_prediction_dataset.csv`
+
+**Ensure the file exists at:** `dags/data/diabetes_prediction_dataset.csv`
+
+If missing, add your diabetes dataset CSV to the `dags/data/` directory.
+
+### View Container Logs
+
+```bash
+# View all logs
+docker compose logs -f
+
+# View specific service
+docker compose logs -f airflow-scheduler
+```
+
+## 📦 Dependencies
+
+### Python Packages
+
+```
+pandas>=1.3.0          # Data manipulation
+scikit-learn>=1.0.0    # ML models and metrics
+numpy>=1.21.0          # Numerical computing
+```
+
+### Docker Services
+
+- **apache/airflow:2.9.2** - Airflow with Python 3.11
+- **postgres:13** - Metadata database
+- **redis:7.2-bookworm** - Task message broker
+- **celery** - Distributed task queue (included in Airflow)
+
+## 🧹 Cleanup
+
+### Stop Services (Keep Data)
+
+```bash
+docker compose down
+```
+
+### Stop Services (Delete All Data)
+
+```bash
+docker compose down -v
+```
+
+### Reset Pipeline State
+
+```bash
+# Delete logs
+rm -rf logs/*
+
+# Stop and remove containers
+docker compose down -v
+docker compose up airflow-init
+```
+
+## 🔗 References
+
+- [Apache Airflow Documentation](https://airflow.apache.org/docs/)
+- [Airflow Docker Compose Setup](https://airflow.apache.org/docs/apache-airflow/stable/howto/docker-compose/index.html)
+- [scikit-learn RandomForestClassifier](https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.RandomForestClassifier.html)
+- [Diabetes Prediction Dataset](https://www.kaggle.com/datasets/iammustafatz/diabetes-prediction-dataset)
+
+## 📝 Notes
+
+- **Data Leakage Prevention:** Scaler is fit ONLY on training data and applied to test data
+- **Class Imbalance:** Handled via `class_weight='balanced'` parameter
+- **Reproducibility:** Random seeds (random_state=42) ensure consistent results
+- **Logging:** All task outputs stored in `logs/` directory with DAG ID and run ID hierarchy
+
+## 👨‍💻 Development
+
+### Running Individual Tasks
+
+```bash
+# Trigger a specific task
+docker compose exec airflow-cli airflow tasks test Diabetes_Prediction_Pipeline load_data_task 2025-01-01
+```
+
+### Viewing DAG Definition
+
+```bash
+# Check DAG syntax
+docker compose exec airflow-cli airflow dags list
+
+# Get DAG details
+docker compose exec airflow-cli airflow dags info Diabetes_Prediction_Pipeline
+```
+
+### Modifying the Pipeline
+
+1. Edit `dags/src/lab.py` or `dags/airflow.py`
+2. Airflow auto-detects changes (check scheduler logs)
+3. Trigger a new run to test changes
+
+## 📜 License
+
+This project is provided as-is for educational and development purposes.
