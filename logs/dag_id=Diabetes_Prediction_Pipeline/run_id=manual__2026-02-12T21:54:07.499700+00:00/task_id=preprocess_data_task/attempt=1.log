@@ -1,0 +1,28 @@
+[2026-02-12T21:54:11.354+0000] {local_task_job_runner.py:120} INFO - ::group::Pre task execution logs
+[2026-02-12T21:54:11.361+0000] {taskinstance.py:2076} INFO - Dependencies all met for dep_context=non-requeueable deps ti=<TaskInstance: Diabetes_Prediction_Pipeline.preprocess_data_task manual__2026-02-12T21:54:07.499700+00:00 [queued]>
+[2026-02-12T21:54:11.364+0000] {taskinstance.py:2076} INFO - Dependencies all met for dep_context=requeueable deps ti=<TaskInstance: Diabetes_Prediction_Pipeline.preprocess_data_task manual__2026-02-12T21:54:07.499700+00:00 [queued]>
+[2026-02-12T21:54:11.364+0000] {taskinstance.py:2306} INFO - Starting attempt 1 of 1
+[2026-02-12T21:54:11.369+0000] {taskinstance.py:2330} INFO - Executing <Task(PythonOperator): preprocess_data_task> on 2026-02-12 21:54:07.499700+00:00
+[2026-02-12T21:54:11.372+0000] {warnings.py:112} WARNING - /home/***/.local/lib/python3.12/site-packages/***/task/task_runner/standard_task_runner.py:61: DeprecationWarning: This process (pid=138) is multi-threaded, use of fork() may lead to deadlocks in the child.
+  pid = os.fork()
+
+[2026-02-12T21:54:11.373+0000] {standard_task_runner.py:63} INFO - Started process 152 to run task
+[2026-02-12T21:54:11.373+0000] {standard_task_runner.py:90} INFO - Running: ['***', 'tasks', 'run', 'Diabetes_Prediction_Pipeline', 'preprocess_data_task', 'manual__2026-02-12T21:54:07.499700+00:00', '--job-id', '5', '--raw', '--subdir', 'DAGS_FOLDER/***.py', '--cfg-path', '/tmp/tmpbfkgyanp']
+[2026-02-12T21:54:11.374+0000] {standard_task_runner.py:91} INFO - Job 5: Subtask preprocess_data_task
+[2026-02-12T21:54:11.391+0000] {task_command.py:426} INFO - Running <TaskInstance: Diabetes_Prediction_Pipeline.preprocess_data_task manual__2026-02-12T21:54:07.499700+00:00 [running]> on host d7c1b179de33
+[2026-02-12T21:54:11.417+0000] {taskinstance.py:2648} INFO - Exporting env vars: AIRFLOW_CTX_DAG_OWNER='***' AIRFLOW_CTX_DAG_ID='Diabetes_Prediction_Pipeline' AIRFLOW_CTX_TASK_ID='preprocess_data_task' AIRFLOW_CTX_EXECUTION_DATE='2026-02-12T21:54:07.499700+00:00' AIRFLOW_CTX_TRY_NUMBER='1' AIRFLOW_CTX_DAG_RUN_ID='manual__2026-02-12T21:54:07.499700+00:00'
+[2026-02-12T21:54:11.417+0000] {taskinstance.py:430} INFO - ::endgroup::
+[2026-02-12T21:54:11.495+0000] {logging_mixin.py:188} INFO - ✅ Encoding done. Sample:
+   gender   age  hypertension  ...  HbA1c_level  blood_glucose_level  diabetes
+0       0  80.0             0  ...          6.6                  140         0
+1       0  54.0             0  ...          6.6                   80         0
+2       1  28.0             0  ...          5.7                  158         0
+
+[3 rows x 9 columns]
+[2026-02-12T21:54:11.513+0000] {logging_mixin.py:188} INFO - ✅ Train size: (80000, 8), Test size: (20000, 8)
+[2026-02-12T21:54:11.848+0000] {python.py:237} INFO - Done. Returned value was: None
+[2026-02-12T21:54:11.848+0000] {taskinstance.py:441} INFO - ::group::Post task execution logs
+[2026-02-12T21:54:11.852+0000] {taskinstance.py:1206} INFO - Marking task as SUCCESS. dag_id=Diabetes_Prediction_Pipeline, task_id=preprocess_data_task, run_id=manual__2026-02-12T21:54:07.499700+00:00, execution_date=20260212T215407, start_date=20260212T215411, end_date=20260212T215411
+[2026-02-12T21:54:11.895+0000] {local_task_job_runner.py:240} INFO - Task exited with return code 0
+[2026-02-12T21:54:11.904+0000] {taskinstance.py:3503} INFO - 1 downstream tasks scheduled from follow-on schedule check
+[2026-02-12T21:54:11.905+0000] {local_task_job_runner.py:222} INFO - ::endgroup::
